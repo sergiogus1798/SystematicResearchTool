@@ -40,3 +40,4 @@ class Reader:
         if stratsDF != self.nStrats:
             raise Exception(f"Number of strategies ({self.nStrats}) differ from number of dataframe columns ({stratsDF}).")
             
+        return stratCleanData
