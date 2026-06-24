@@ -35,7 +35,7 @@ class Reader:
             stratCleanData = pd.concat([stratCleanData, dataStrat], axis=1)
  
         # Checks just in case
-        periodsDF, stratsDF = stratCleanData.shape()
+        periodsDF, stratsDF = stratCleanData.shape
         
         if stratsDF != self.nStrats:
             raise Exception(f"Number of strategies ({self.nStrats}) differ from number of dataframe columns ({stratsDF}).")
