@@ -3,6 +3,8 @@ import itertools as it
 import math
 import scipy.stats as stats
 import matplotlib.pyplot as plt
+import statsmodels.api as statmodels
+from patsy import dmatrices
 
 class cscv:
     def __init__(self, originalData, S = 16, returnsFreq = "Weekly", performanceMetric = "Sharpe"):
@@ -109,7 +111,7 @@ class cscv:
         plt.title("Probability density function of the logits (lambda_c)")
         plt.xlabel("Logits")
         plt.ylabel("Frequency")
-        plt.grid(show=True)
+        #plt.grid(show=True)
         ax = plt.gca()
         ax.text(0.95, 0.95, f"PBO = {self.PBO:.3f}",
         transform=ax.transAxes, ha="right", va="top", fontsize=10,
@@ -121,8 +123,21 @@ class cscv:
         plt.scatter(x=self.performanceIS, y=self.performanceOOS, marker=".", s=4)
         plt.xlabel("In-sample Performance", fontsize=12)
         plt.ylabel("Out-of-sample Performance", fontsize=12)
-        plt.grid(show=True)
+        #plt.grid(show=True)
         plt.title(f"Candidate strategies: IS vs OOS Performance ({self.performanceMetric})",
              fontsize=14, fontweight="bold", pad=14)
         
+        # Fitting a OLS model
+        X = statmodels.add_constant(self.performanceIS)
+        model = statmodels.OLS(self.performanceOOS, X)
+        res = model.fit()
+        print(res.summary())
+        
+        alpha, beta = res.params            # [const, slope]
+
+        x_line = np.linspace(self.performanceIS.min(), self.performanceIS.max(), 100)
+        y_line = alpha + beta * x_line
+        plt.plot(x_line, y_line, color="black", linewidth=2,
+            label=f"OLS: y = {alpha:.2f} + {beta:.2f}x")
+        plt.legend()
         plt.show()
