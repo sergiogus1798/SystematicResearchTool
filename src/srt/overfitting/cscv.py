@@ -61,14 +61,14 @@ class cscv:
             std = backtestsMatrix.std(axis=0)
             return (mean / std) * self.sharpeFactor
         elif self.performanceMetric == "Sortino":
-            negMatrix = backtestsMatrix[backtestsMatrix < 0.00]
+            negMatrix = np.where(backtestsMatrix < 0.00, backtestsMatrix, np.nan)
             mean = backtestsMatrix.mean(axis=0)
-            std = negMatrix.std(axis=0)
+            std = np.nanstd(negMatrix, axis=0)
             return (mean / std) * self.sharpeFactor
         elif self.performanceMetric == "ProfitFactor":
-            positiveTotal = backtestsMatrix[backtestsMatrix > 0.00].sum(axis=0)
-            negativeTotal = backtestsMatrix[backtestsMatrix < 0.00].sum(axis=0)
-            return positiveTotal / negativeTotal
+            positiveTotal = np.where(backtestsMatrix > 0, backtestsMatrix, 0.00).sum(axis=0)
+            negativeTotal = np.where(backtestsMatrix < 0, backtestsMatrix, 0.00).sum(axis=0)
+            return abs(positiveTotal / negativeTotal)
         elif self.performanceMetric == "PnL":
             return backtestsMatrix.sum(axis=0)
         
@@ -92,6 +92,8 @@ class cscv:
             R1 = self.performanceCalculation(j1Matrix)
             R2 = self.performanceCalculation(j2Matrix)
             
+            assert np.isfinite(R1).all() and np.isfinite(R2).all()
+            
             indexR1max = np.argmax(R1)
             self.performanceIS[iter] = R1[indexR1max]
             self.performanceOOS[iter] = R2[indexR1max]
@@ -102,8 +104,8 @@ class cscv:
             print(f"Tested {iter+1}/{self.nCombinations} combinations, ({100 * ((iter+1)/self.nCombinations):.3f} %)")
             iter = iter + 1
         
-        positiveLogits = self.lambda_c[self.lambda_c > 0.00]
-        self.PBO = len(positiveLogits) / self.nCombinations
+        negativeLogits = self.lambda_c[self.lambda_c < 0.00]
+        self.PBO = len(negativeLogits) / self.nCombinations
             
     def plotHistogramLogits(self, nBins=50):
         
