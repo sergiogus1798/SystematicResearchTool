@@ -2,9 +2,10 @@ import numpy as np
 import pandas as pd
 import os
 import quantstats as qs
+from src.srt.metrics.metrics import metrics
 
 class wfmAnalysis:
-    def __init__(self, fileName):
+    def __init__(self, fileName, returnsFreq="Weekly"):
         self.fileName = os.path.join("DataWFM", fileName)
         
         # Checking file exists
@@ -13,7 +14,10 @@ class wfmAnalysis:
             
         self.rawFileData = pd.read_csv(self.fileName, sep=";", parse_dates=["Close time"], date_format="%Y.%m.%d %H:%M:%S")
         self.getNamesBacktests()
-
+        self.nRuns = len(self.namesListInd)
+        
+        self.metrics = metrics(returnsFreq=returnsFreq)
+        
     def getNamesBacktests(self):
         namesList = list(pd.unique(self.rawFileData["Result name"]))
         self.namesListInd = {index: name for index, name in enumerate(namesList)}
@@ -56,3 +60,53 @@ class wfmAnalysis:
             self.backtestData[b] = resultData.to_numpy()
             
         print(self.backtestData.shape)
+        
+        
+    def getSignificanceMetrics(self, countZeroWeeks=True):
+            
+        self.sharpeSeries_All = np.zeros(self.nRuns)
+        self.sharpeSeries_IS = np.zeros(self.nRuns)
+        self.sharpeSeries_OOS = np.zeros(self.nRuns)
+        self.PSRSeries_IS = np.zeros(self.nRuns)
+        self.PSRSeries_OOS = np.zeros(self.nRuns)
+        
+        self.lengthRuns_OOS = np.zeros(self.nRuns)
+        self.minTRLSeries_OOS = np.zeros(self.nRuns)
+        for i in range(self.nRuns):
+            returns = self.backtestData[i, :, 0]
+            returns_IS = returns[self.backtestData[i, :, 1] == 0]
+            returns_OOS = returns[self.backtestData[i, :, 1] == 1]
+            
+            nonzero_pos = np.nonzero(returns)[0]
+            nonzero_pos_IS = np.nonzero(returns_IS)[0]     # positions of active (nonzero) weeks
+            nonzero_pos_OOS = np.nonzero(returns_OOS)[0]     # positions of active (nonzero) weeks
+            first, last = nonzero_pos.min(), nonzero_pos.max()
+            firstIS, lastOOS = nonzero_pos_IS.min(), nonzero_pos_OOS.max()
+            activeReturns = returns[first:last+1]
+            activeReturns_IS = returns_IS[firstIS:]
+            activeReturns_OOS = returns_OOS[:lastOOS+1]
+            if not countZeroWeeks:
+                activeReturns = activeReturns[activeReturns != 0]
+                activeReturns_IS = activeReturns_IS[activeReturns_IS != 0]
+                activeReturns_OOS = activeReturns_OOS[activeReturns_OOS != 0]
+                
+            self.sharpeSeries_All[i] = self.metrics.sharpe(tradesSeries=activeReturns)
+            self.sharpeSeries_IS[i] = self.metrics.sharpe(tradesSeries=activeReturns_IS)
+            self.sharpeSeries_OOS[i] = self.metrics.sharpe(tradesSeries=activeReturns_OOS)
+            self.PSRSeries_IS[i] = self.metrics.PSR(tradesSeries=activeReturns_IS, annualizedBenchmarkSharpe=0.0)
+            self.PSRSeries_OOS[i] = self.metrics.PSR(tradesSeries=activeReturns_OOS, annualizedBenchmarkSharpe=0.0)
+            
+            self.lengthRuns_OOS[i] = len(activeReturns_OOS)
+            self.minTRLSeries_OOS[i] = self.metrics.minTRL(candidateReturns=activeReturns_OOS, confidence=95, annualizedBenchmarkSharpe=0.0)
+            
+        valid = ~np.isnan(self.sharpeSeries_OOS)
+        deflatedBenchmarkSR = self.metrics.deflatedBenchmark(sharpeSeries=self.sharpeSeries_OOS[valid])
+        bestSharpeIndex_OOS = np.nanargmax(self.sharpeSeries_OOS)
+        returnsBest_OOS = self.backtestData[bestSharpeIndex_OOS, :, 0][self.backtestData[bestSharpeIndex_OOS, :, 1] == 1]
+        nonzero_pos_OOS = np.nonzero(returnsBest_OOS)[0]     # positions of active (nonzero) weeks
+        lastOOS = nonzero_pos_OOS.max()
+        activereturnsBest_OOS = returnsBest_OOS[:lastOOS+1]
+        if not countZeroWeeks:
+            activereturnsBest_OOS = activereturnsBest_OOS[activereturnsBest_OOS != 0]
+
+        self.deflatedSR = self.metrics.DSR(candidateData=activereturnsBest_OOS, deflatedSR=deflatedBenchmarkSR)
