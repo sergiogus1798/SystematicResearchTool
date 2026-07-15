@@ -142,9 +142,9 @@ class wfmAnalysis:
         elif metric == 'volatility':
             r = qs.stats.rolling_volatility(s, rolling_period=window, periods_per_year=periodsYear)
         elif metric == 'profitFactor':
-            r = s.rolling(window).apply(
-                lambda w: w[w > 0].sum() / -w[w < 0].sum() if (w < 0).any() and (w > 0).any() else np.nan,
-                raw=False)
+            pos = s.clip(lower=0).rolling(window).sum()
+            neg = -s.clip(upper=0).rolling(window).sum()
+            r = pos / neg.replace(0, np.nan)
         elif metric == 'annualReturn':
             # fixed-notional -> arithmetic: mean weekly PnL scaled to a year
             r = s.rolling(window).mean() * periodsYear
