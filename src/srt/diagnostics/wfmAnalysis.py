@@ -5,7 +5,7 @@ import quantstats as qs
 from src.srt.metrics.metrics import metrics
 
 class wfmAnalysis:
-    def __init__(self, fileName, returnsFreq="Weekly"):
+    def __init__(self, fileName, returnsFreq="Weekly", startDate="2003-01-01 00:00:00", endDate="2025-12-31 23:59:59"):
         self.fileName = os.path.join("DataWFM", fileName)
         
         # Checking file exists
@@ -13,55 +13,68 @@ class wfmAnalysis:
             raise Exception(f"File with name {fileName} does not exist in DataWFM directory.")
             
         self.rawFileData = pd.read_csv(self.fileName, sep=";", parse_dates=["Close time"], date_format="%Y.%m.%d %H:%M:%S")
+        
+        self.initialBalance = self.getInitialBalance()
         self.getNamesBacktests()
         self.nRuns = len(self.namesListInd)
+        self.returnsFreq = returnsFreq
+        self.startDate = startDate
+        self.endDate = endDate
+        self.metrics = metrics(returnsFreq=self.returnsFreq)
+    
+    def getInitialBalance(self):
+        firstTrade = self.rawFileData["Profit/Loss"][0]    
+        firstBalance = self.rawFileData["Balance"][0]
+        if firstTrade <= 0.0:
+            return firstBalance + abs(firstTrade)
+        else:
+            return firstBalance - abs(firstTrade)
         
-        self.metrics = metrics(returnsFreq=returnsFreq)
         
     def getNamesBacktests(self):
         namesList = list(pd.unique(self.rawFileData["Result name"]))
         self.namesListInd = {index: name for index, name in enumerate(namesList)}
 
-    def getReturnsSeries(self, startDate="2003-01-01 00:00:00", endDate="2025-12-31 23:59:59", returns="Weekly"):
+
+    def getReturnsSeries(self, normalizeReturns=True):
         
-        if returns == "Weekly":
+        if self.returnsFreq == "Weekly":
             conversion = "W"
-        elif returns == "Daily":
+        elif self.returnsFreq == "Daily":
             conversion = "D"
-        elif returns == "Monthly":
+        elif self.returnsFreq == "Monthly":
             conversion = "ME"
         else:
-            raise ValueError(f"returns must be 'Daily', 'Weekly', or 'Monthly', got {returns!r}")
+            raise ValueError(f"returns must be 'Daily', 'Weekly', or 'Monthly', got {self.returnsFreq!r}")
 
-        periodPartitionIndex = pd.period_range(start=startDate, end=endDate, freq=conversion)
-        self.nBacktests = len(self.namesListInd)
-        self.backtestData = np.zeros((self.nBacktests, len(periodPartitionIndex), 2))
+        periodPartitionIndex = pd.period_range(start=self.startDate, end=self.endDate, freq=conversion)
+        self.backtestDfs = {}
         for b, backtest in self.namesListInd.items():
-            print(f"{b}: {backtest}")
             resultData = self.rawFileData[self.rawFileData["Result name"] == backtest]
             resultData = resultData[["Close time", "Profit/Loss", "Sample type"]]
             resultData['Close time'] = resultData['Close time'].dt.to_period(conversion)
-            resultData = resultData.groupby('Close time').sum()
-            resultData = resultData.reindex(periodPartitionIndex, fill_value=0.00)    
-
-            rowsIS = resultData.index[resultData["Sample type"].str.contains("IS", na=False)]
-            rowsOOS = resultData.index[resultData["Sample type"].str.contains("OOS", na=False)]
             
-            lastIS = rowsIS.max()
-            firstOOS = rowsOOS.min()
+            pnl = resultData.groupby('Close time')["Profit/Loss"].sum()
+            if normalizeReturns:
+                pnl = pnl / self.initialBalance
+            label = resultData.groupby("Close time")["Sample type"].first()
             
-            resultData.loc[:lastIS, "Sample type"] = "IS"
+            df = pd.DataFrame({"PnL": pnl, "Sample type": label})
+            df = df.reindex(periodPartitionIndex)
+            df["PnL"] = df["PnL"].fillna(0.0)
             
+            rowsIS = df.index[df["Sample type"].str.contains("IS", na=False)]
+            rowsOOS = df.index[df["Sample type"].str.contains("OOS", na=False)]
+            
+            if len(rowsIS) != 0:
+                df.loc[:rowsIS.max(), "sample_type"] = "IS"
             if len(rowsOOS) != 0:
-                resultData.loc[firstOOS:, "Sample type"] = "OOS"
-
-            resultData["Sample type"] = (resultData["Sample type"] == "OOS").astype(int)
-            
-            self.backtestData[b] = resultData.to_numpy()
-            
-        print(self.backtestData.shape)
+                df.loc[rowsOOS.min():, "sample_type"] = "OOS"
         
-    
+            df["Sample type"] = (df["Sample type"] == "OOS").astype(int)
+            self.backtestDfs[backtest] = df[["PnL", "Sample type"]]
+
+
     def filterReturnsData(self, rawData, dataType="All", countZeroWeeks=True):
         
         if dataType == "All":  
@@ -107,3 +120,6 @@ class wfmAnalysis:
         bestSharpeIndex_OOS = np.nanargmax(self.sharpeSeries_OOS)
         returnsBest_OOS = self.filterReturnsData(rawData=self.backtestData[bestSharpeIndex_OOS, :, :], dataType="OOS", countZeroWeeks=True)
         self.deflatedSR = self.metrics.DSR(candidateData=returnsBest_OOS, deflatedSR=deflatedBenchmarkSR)
+        
+    #def getDegradation(self):
+        
