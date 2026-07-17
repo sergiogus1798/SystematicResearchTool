@@ -27,9 +27,9 @@ for b, backtest in analysis1.namesListInd.items():
     print(f"Return Distribution Skewness: {skew:.4f}")
     print(f"Return Distribution Kurtosis: {kurtosis:.4f}")
     print("\n")
-    a = qs.stats.rolling_sharpe(ret, rolling_period=26, periods_per_year=52)
+    #a = qs.stats.rolling_sharpe(ret, rolling_period=26, periods_per_year=52)
     #qs.reports.html(ret, "SPY")
     
 #analysis1.plotEquityCurves(mainName="Main: XAUUSD_DukasM1_Infinox/H1", capital=100000.0, figsize=(12, 6))
 
-analysis1.plotDegradation(mainName="Main: XAUUSD_DukasM1_Infinox/H1", window=52, baselineWindows=4*52)
+analysis1.plotDegradation(mainName="Main: XAUUSD_DukasM1_Infinox/H1", metric="annualReturn", method="ratio_baseline", window=52, baselineWindows=4*52)

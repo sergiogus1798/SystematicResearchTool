@@ -125,14 +125,12 @@ class wfmAnalysis:
         
     #def getDegradation(self):
         
-    def rollingCalculation(self, backtestData=None, name, metric, window, periodsYear=52, capital=None):
-        if backtestData == None:
-            backtestData = self.backtestDfs
-        
+    def rollingCalculation(self, name, metric="sharpe", window=52, periodsYear=52, capital=None):
+
         if capital == None:
             capital = self.initialBalance
-                
-        s = backtestData[name]["Returns"]
+          
+        s = self.backtestDfs[name]["Returns"]
         s.index = s.index.to_timestamp()
 
         if metric == 'sharpe':
@@ -154,6 +152,28 @@ class wfmAnalysis:
         return r.replace([np.inf, -np.inf], np.nan).dropna()
 
 
+    def normalizeDegradation(self, r, method='diff_baseline', baselineWindows=52):
+        """Normalize one rolling series against a reference. Pure: Series -> Series."""
+        if len(r) < baselineWindows + 10:
+            return None
+        base = r.iloc[:baselineWindows].mean()
+        if not np.isfinite(base):
+            return None
+
+        if method == 'diff_baseline':
+            return r - base
+        if method == 'ratio_baseline':
+            return r / base if base > 1e-9 else None
+        if method == 'zscore_baseline':
+            sd = r.iloc[:baselineWindows].std(ddof=1)
+            return (r - base) / sd if sd > 1e-9 else None
+        if method == 'expanding_ref':
+            return r - r.expanding().mean()
+        if method == 'rank':
+            return r.rank(pct=True)
+        if method == 'none':
+            return r
+        raise ValueError(method)
 
 
     def plotEquityCurves(self, mainName=None, capital=100000.0, figsize=(12, 6)):
@@ -190,53 +210,39 @@ class wfmAnalysis:
         plt.show()
         
 
-    def plotDegradation(self, metric='sharpe', window=52, baselineWindows=52,
-                        mainName=None, capital=100000.0, figsize=(12, 6)):
-        """
-        Rolling metric normalized by its own baseline (mean of the first `baselineWindows`
-        valid rolling values). All runs start at 1.0; the curve shows relative decay.
-        metric: 'sharpe' | 'sortino' | 'volatility'
-        window: rolling window in weeks
-        baselineWindows: how many initial rolling values to average as the baseline
-        """
-        fn = {'sharpe':     qs.stats.rolling_sharpe,
-            'sortino':    qs.stats.rolling_sortino,
-            'volatility': qs.stats.rolling_volatility}[metric]
-
+    def plotDegradation(self, metric='sharpe', window=52, method='diff_baseline',
+                    baselineWindows=52, mainName=None, figsize=(12, 6)):
+        """Orchestration: loop runs, normalize, draw."""
         if mainName is None:
             mainName = next(n for n in self.backtestDfs if n.startswith('Main'))
 
-        def normalized(name):
-            s = self.backtestDfs[name]["Returns"]
-            s.index = s.index.to_timestamp()
-            r = fn(s, rolling_period=window, periods_per_year=52)
-            r = r.replace([np.inf, -np.inf], np.nan).dropna()
-            r = r[r != 0]                                   # drop dead-zone windows
-            if len(r) < baselineWindows + 10:
-                return None
-            base = r.iloc[:baselineWindows].mean()
-            if not np.isfinite(base) or abs(base) < 1e-9:
-                return None
-            return r / base
+        curves = {}
+        for name in self.backtestDfs:
+            r = self.rollingCalculation(name, metric, window)
+            z = self.normalizeDegradation(r, method, baselineWindows)
+            if z is not None:
+                curves[name] = z
 
         fig, ax = plt.subplots(figsize=figsize)
+        for name, z in curves.items():
+            if name != mainName:
+                ax.plot(z.index, z.values, color='#9aa0a6', lw=0.8, alpha=0.35, zorder=1)
 
-        for name in self.backtestDfs:
-            if name == mainName:
-                continue
-            r = normalized(name)
-            if r is not None:
-                ax.plot(r.index, r.values, color='#9aa0a6', lw=0.8, alpha=0.4, zorder=1)
+        if curves:
+            stacked = pd.concat(curves.values(), axis=1)
+            ax.plot(stacked.index, stacked.median(axis=1).values,
+                    color='#1f4e9c', lw=2.2, zorder=4, label='median of runs')
+            ax.fill_between(stacked.index, stacked.quantile(.25, axis=1),
+                            stacked.quantile(.75, axis=1),
+                            color='#1f4e9c', alpha=0.12, zorder=0, label='IQR')
 
-        r = normalized(mainName)
-        if r is not None:
-            ax.plot(r.index, r.values, color='#c0392b', lw=2.0, zorder=3, label='Main')
+        if mainName in curves:
+            z = curves[mainName]
+            ax.plot(z.index, z.values, color='#c0392b', lw=2.0, zorder=3, label='Main')
 
-        ax.axhline(1.0, color='#333', lw=1.0, ls='--', zorder=2, label='baseline (no decay)')
-        ax.plot([], [], color='#9aa0a6', lw=0.8, alpha=0.6,
-                label=f'WF runs (n={len(self.backtestDfs)-1})')
-        ax.set_xlabel('date')
-        ax.set_ylabel(f'rolling {metric} ÷ first-{baselineWindows}w average')
+        ref = {'ratio_baseline': 1.0, 'rank': 0.5}.get(method, 0.0)
+        ax.axhline(ref, color='#333', lw=1.0, ls='--', zorder=2)
+        ax.set_ylabel(f'{metric} ({window}w) — {method}')
         ax.legend(frameon=False, loc='upper right')
         ax.grid(alpha=0.25, lw=0.5)
         ax.spines[['top','right']].set_visible(False)
